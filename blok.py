@@ -5,50 +5,88 @@ class Blok:
         self.dcounter = 0
         self.dotsize = 10
         self.arrowsize = 5
+        self.portalsize = 40
         self.parent = parent
         self.running = False
         self.master_count = self.count = 2
         self.parent.title('Blok')
         self.canvas_width = 640
         self.canvas_height = 480
-        self.boards = itertools.cycle([([(100, 100, 120, 120), (250, 250, 270, 270)],
-                                        [(100, 240, 140, 280), (175, 165, 215, 205), (25, 165, 65, 205)],
-                                        [{'start':(120, 260, 140, 240),
+        self.boards = itertools.cycle([{'bumpers':[(100, 100, 120, 120), (250, 250, 270, 270)],
+                                        'targets':[(100, 240, 140, 280), (175, 165, 215, 205), (25, 165, 65, 205)],
+                                        'shooters':[{'start':(120, 260, 140, 240),
                                           'bbox':(100, 240, 140, 280),
                                           'ms_per_rotation_tick':0,
                                           'shot':False},
                                           {'start':(120, 260, 140, 280),
                                           'bbox':(100, 240, 140, 280),
                                           'ms_per_rotation_tick':25,
-                                          'shot':False}
-                                          ])])
+                                          'shot':False}]
+                                       }])
         self.draw_board()
         
     def draw_board(self, canvas=None, success=True):
         print(self.dcounter, '--------')
         self.dcounter+=1
         self.count = self.master_count
+        self.portal_x_offset = 0
+        self.portal_y_offset = 0
         if canvas:
             canvas.destroy()
         self.canvas = tk.Canvas(self.parent, width=self.canvas_width, height=self.canvas_height, bg="white")
         self.canvas.pack()
         if success:
             self.objects = next(self.boards)
-        self.bumper_coords = self.objects[0]
-        self.target_coords = self.objects[1][:] # make a copy so we can mutate it without clearing the board list
-        self.shooter_coords = [{k:item[k] for k in item} for item in self.objects[2]]
+        self.bumper_coords = self.objects.get('bumpers', [])
+        self.target_coords = self.objects.get('targets', [])[:] # make a copy so we can mutate it without clearing the board list
+        self.shooter_coords = [{k:item[k] for k in item} for item in self.objects.get('shooters', [])]
+        self.portal_coords = []
         self.bumpers = [self.canvas.create_rectangle(tup, fill='black', outline='black') for tup in self.bumper_coords]
         self.targets = [self.canvas.create_rectangle(tup, fill='red', outline='red') for tup in self.target_coords]
         self.shooters = [self.canvas.create_line(arrow['start'], fill='blue', width=self.arrowsize, arrow=tk.LAST) for arrow in self.shooter_coords]
+        self.portals = []
         for shooter,data in zip(self.shooters, self.shooter_coords):
             if data['ms_per_rotation_tick']:
                 self.rotate(shooter, data)
         self.canvas.bind("<Button-1>", self.start)
-        self.canvas.bind("<Button-3>", lambda x: print(self.shooter_coords))
+        self.canvas.bind("<Button-3>", self.portal_entrance)
         self.all_good_things = self.parent.after(1, lambda: None)
         self.shooting = self.parent.after(1, lambda: None)
         self.decimate = 0 # counter for lower-res paintbrush
-        
+    
+    def portal_entrance(self, event):
+        self.canvas.bind("<ButtonRelease-3>", lambda x: self.portal_exit(x, event))
+    
+    def portal_exit(self, end, start):
+        self.canvas.unbind("<ButtonRelease-3>")
+        x_start, y_start, x_end, y_end = start.x, start.y, end.x, end.y
+        if abs(x_start-x_end) < self.portalsize and abs(y_start-y_end) < self.portalsize:
+            return # end if start/end portals overlap
+        if not all((self.portalsize < x_start < self.canvas_width-self.portalsize,
+                self.portalsize < x_end < self.canvas_width-self.portalsize,
+                self.portalsize < y_start < self.canvas_height-self.portalsize,
+                self.portalsize < y_end < self.canvas_height-self.portalsize)):
+            return # end if either portal is off canvas
+        for pair in self.portal_coords:
+            for x1,y1,x2,y2 in pair:
+                for x,y in (x_start, y_start), (x_end, y_end):
+                    if x1-self.portalsize < x < x2+self.portalsize and y1-self.portalsize < y < y2+self.portalsize:
+                        return # end if either portal overlaps another portal
+        for x1, y1, x2, y2 in self.bumper_coords:
+            for x,y in (x_start, y_start), (x_end, y_end):
+                if x1-self.portalsize < x < x2+self.portalsize and y1-self.portalsize < y < y2+self.portalsize:
+                    return # end if either portal overlaps a bumper
+        for x1, y1, x2, y2 in self.target_coords:
+            for x,y in (x_start, y_start), (x_end, y_end):
+                if x1-self.portalsize < x < x2+self.portalsize and y1-self.portalsize < y < y2+self.portalsize:
+                    return # end if either portal overlaps a target
+
+        self.portal_coords.append(((x_start-self.portalsize, y_start-self.portalsize, x_start+self.portalsize, y_start+self.portalsize),
+                                   (x_end-self.portalsize, y_end-self.portalsize, x_end+self.portalsize, y_end+self.portalsize)))
+        options = {'dash':1, 'fill':'gray80', 'outline':'purple', 'width':20}
+        self.portals.append((self.canvas.create_rectangle(self.portal_coords[-1][0], **options),
+                             self.canvas.create_rectangle(self.portal_coords[-1][1], **options)))
+    
     def start(self, event):
         for x1, y1, x2, y2 in self.target_coords:
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
@@ -56,6 +94,8 @@ class Blok:
         for x1, y1, x2, y2 in self.bumper_coords:
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 return
+        if not self.dotsize < event.x < self.canvas_width-self.dotsize:
+            return
         self.stuff = [[]]
         self.canvas.bind("<Button-1>", self.cancel)
         self.canvas.bind("<B1-Motion>", self.draw)
@@ -80,6 +120,7 @@ class Blok:
             if self.collisions(event, square=self.stuff[-1][-1][0]):
                 self.canvas.unbind("<B1-Motion>")
                 self.canvas.unbind("<ButtonRelease-1>")
+                self.canvas.unbind("<Button-3>")
         self.decimate += 1
         if self.decimate == 1: # decimate by 15, so 1/15 mouse draw events actually get drawn - leaving at 1 for now
             self.decimate = 0
@@ -87,6 +128,7 @@ class Blok:
     def repeat(self, event):
         self.canvas.unbind("<B1-Motion>")
         self.canvas.unbind("<ButtonRelease-1>")
+        self.canvas.unbind("<Button-3>")
         collided = False
         if event:
             self.rep_time = event.time - self.stuff[-1][-1][1]
@@ -100,7 +142,7 @@ class Blok:
     def repeat_cycle(self):
         idx = len(self.stuff[0])-self.repeat_count-1
         item,timing = self.stuff[0][idx]
-        coords = [sum(coords) for coords in zip(self.canvas.bbox(item), self.offset_total)]
+        coords = [sum(coords) for coords in zip(self.canvas.bbox(item), self.offset_total, (self.portal_x_offset, self.portal_y_offset, self.portal_x_offset, self.portal_y_offset))]
         mid = self.bounce((coords[0]+coords[2])//2, self.canvas_width)
         coords[0] = mid-self.dotsize
         coords[2] = mid+self.dotsize
@@ -178,11 +220,52 @@ class Blok:
             if x1-dotsize < mid_x < x2+dotsize and y1-dotsize < mid_y < y2+dotsize:
                 self.all_good_things = self.parent.after(1000, lambda: self.reset(0))
                 return True
-        if event and (mid_x-dotsize <= 0 or mid_x+dotsize >= self.canvas_width):
-            self.canvas.unbind("<B1-Motion>")
-            self.canvas.unbind("<ButtonRelease-1>")
-            self.repeat(event)
-            return True
+        if event:
+            if mid_x-dotsize <= 0 or mid_x+dotsize >= self.canvas_width:
+                self.canvas.unbind("<B1-Motion>")
+                self.canvas.unbind("<ButtonRelease-1>")
+                self.canvas.unbind("<Button-3>")
+                self.repeat(event)
+                return True
+        for (ax1,ay1,ax2,ay2),(bx1,by1,bx2,by2) in self.portal_coords:
+            portaled=False
+            if ax1-dotsize < mid_x < ax2+dotsize and ay1-dotsize < mid_y < ay2+dotsize:
+                left = abs(mid_x-ax1)
+                right = abs(mid_x-ax2)
+                top = abs(mid_y-ay1)
+                bottom = abs(mid_y-ay2)
+                entrance = 1
+                portaled=True
+            elif bx1-dotsize < mid_x < bx2+dotsize and by1-dotsize < mid_y < by2+dotsize:
+                left = abs(mid_x-bx1)
+                right = abs(mid_x-bx2)
+                top = abs(mid_y-by1)
+                bottom = abs(mid_y-by2)
+                entrance = -1
+                portaled=True
+            if portaled:
+                extra = 2*self.portalsize + 2*dotsize
+                if min(left, right, top, bottom) == left:
+                    extra_x = extra
+                    extra_y = 0
+                elif min(right, top, bottom) == right:
+                    extra_x = -extra
+                    extra_y = 0
+                elif min(top, bottom) == top:
+                    extra_x = 0
+                    extra_y = extra
+                else:
+                    extra_x = 0
+                    extra_y = -extra
+                self.portal_x_offset += (bx1-ax1)*entrance + extra_x
+                self.portal_y_offset += (by1-ay1)*entrance + extra_y
+                if event:
+                    self.canvas.unbind("<B1-Motion>")
+                    self.canvas.unbind("<ButtonRelease-1>")
+                    self.canvas.unbind("<Button-3>")
+                    self.repeat(event)
+                    return True
+            
         for idx,(shooter,data) in enumerate(zip(self.shooters, self.shooter_coords)):
             if data['shot']:
                 continue
@@ -199,6 +282,7 @@ class Blok:
                 if event:
                     self.canvas.unbind("<B1-Motion>")
                     self.canvas.unbind("<ButtonRelease-1>")
+                    self.canvas.unbind("<Button-3>")
                     self.repeat(event)
                     return True
         if not self.targets:
@@ -224,6 +308,7 @@ class Blok:
         print(('lose', 'win')[success])
         self.canvas.unbind("<B1-Motion>")
         self.canvas.unbind("<ButtonRelease-1>")
+        self.canvas.unbind("<Button-3>")
         self.parent.after_cancel(self.shooting)
         self.parent.after_cancel(self.all_good_things)
         self.parent.after(1000, self.draw_board(self.canvas, success))
