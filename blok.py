@@ -1,18 +1,35 @@
-import tkinter as tk
+try:
+    import tkinter as tk
+except ImportError:
+    import Tkinter as tk
 import itertools
+import sys
+import ast
 class Blok:
     def __init__(self, parent):
-        self.dcounter = 0
-        self.dotsize = 10
+        self.dotsize = 4
         self.arrowsize = 5
         self.portalsize = 40
         self.parent = parent
         self.running = False
-        self.master_count = self.count = 2
+        self.master_count = self.count = 50
         self.parent.title('Blok')
-        self.canvas_width = 640
-        self.canvas_height = 480
-        self.boards = itertools.cycle([{'bumpers':[(100, 100, 120, 120), (250, 250, 270, 270)],
+        self.canvas_width = 1280
+        self.canvas_height = 900
+        self.boards = itertools.cycle([
+                                       {'name':'1',
+                                        'targets':[(175, 165, 215, 205), (25, 165, 65, 205)]
+                                       },
+                                       {'name':'2',
+                                        'bumpers':[(100, 100, 120, 120), (250, 250, 270, 270)],
+                                        'targets':[(175, 165, 215, 205), (25, 165, 65, 205)]
+                                       },
+                                       {'name':'3',
+                                        'bumpers':[(100, 100, 120, 120), (250, 250, 270, 270)],
+                                        'targets':[(100, 240, 140, 280), (175, 165, 215, 205), (25, 165, 65, 205)]
+                                       },
+                                       {'name':'4',
+                                        'bumpers':[(100, 100, 120, 120), (250, 250, 270, 270)],
                                         'targets':[(100, 240, 140, 280), (175, 165, 215, 205), (25, 165, 65, 205)],
                                         'shooters':[{'start':(120, 260, 140, 240),
                                           'bbox':(100, 240, 140, 280),
@@ -22,12 +39,34 @@ class Blok:
                                           'bbox':(100, 240, 140, 280),
                                           'ms_per_rotation_tick':25,
                                           'shot':False}]
-                                       }])
+                                       },
+                                       {'name':'5',
+                                       'bumpers':[(100, 100, 120, 120), (250, 250, 270, 270), (15, 155, 75, 215)],
+                                       'targets':[(100, 240, 140, 280), (175, 165, 215, 205), (25, 165, 65, 205)],
+                                       'shooters':[{'start':(120, 260, 140, 240),
+                                       'bbox':(100, 240, 140, 280),
+                                       'ms_per_rotation_tick':0,
+                                       'shot':False},
+                                       {'start':(120, 260, 140, 280),
+                                       'bbox':(100, 240, 140, 280),
+                                       'ms_per_rotation_tick':25,
+                                       'shot':False}]
+                                       }
+                                      ])
+        try:
+            with open(sys.argv[1]) as f:
+                tmp = ast.literal_eval(f.read())
+            self.boards = itertools.cycle(tmp)
+            name = sys.argv[2]
+            offset = sum(1 for i in itertools.takewhile(lambda x: x.get('name') != name, tmp))
+            for i in range(offset):
+                next(self.boards)
+        except: # if it breaks for any reason
+            pass # just keep the default
+            
         self.draw_board()
         
     def draw_board(self, canvas=None, success=True):
-        print(self.dcounter, '--------')
-        self.dcounter+=1
         self.count = self.master_count
         self.portal_x_offset = 0
         self.portal_y_offset = 0
@@ -44,6 +83,8 @@ class Blok:
         self.bumpers = [self.canvas.create_rectangle(tup, fill='black', outline='black') for tup in self.bumper_coords]
         self.targets = [self.canvas.create_rectangle(tup, fill='red', outline='red') for tup in self.target_coords]
         self.shooters = [self.canvas.create_line(arrow['start'], fill='blue', width=self.arrowsize, arrow=tk.LAST) for arrow in self.shooter_coords]
+        tmp = self.canvas.create_text(self.canvas_width, self.canvas_height, anchor=tk.SE, font=('Arial', 24), text=self.objects.get('name', ''))
+        #self.parent.after(1000, lambda: self.canvas.coords(tmp, self.canvas_width, self.canvas_height)) # fails 5% of the time expecting 0 or 4 coords; no idea why
         self.portals = []
         for shooter,data in zip(self.shooters, self.shooter_coords):
             if data['ms_per_rotation_tick']:
@@ -87,6 +128,13 @@ class Blok:
         self.portals.append((self.canvas.create_rectangle(self.portal_coords[-1][0], **options),
                              self.canvas.create_rectangle(self.portal_coords[-1][1], **options)))
     
+    def cancel(self, event):
+        self.count = 0
+        self.repeat_count = 0
+        for shooter,data in zip(self.shooters, self.shooter_coords):
+            if data['shot']:
+                self.canvas.coords(shooter, -20, -20, -10, -10)
+    
     def start(self, event):
         for x1, y1, x2, y2 in self.target_coords:
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
@@ -99,17 +147,11 @@ class Blok:
         self.stuff = [[]]
         self.canvas.bind("<Button-1>", self.cancel)
         self.canvas.bind("<B1-Motion>", self.draw)
-        self.canvas.bind("<ButtonRelease-1>", self.repeat)
         self.running = True
         self.check_win()
         self.draw(event, True)
-    
-    def cancel(self, event):
-        self.count = 0
-        self.repeat_count = 0
-        for shooter,data in zip(self.shooters, self.shooter_coords):
-            if data['shot']:
-                self.canvas.coords(shooter, -20, -20, -10, -10)
+        self.draw(event) # just in case the user clicks, doesn't move a single pixel, and releases
+        self.canvas.bind("<ButtonRelease-1>", self.repeat)
         
     def draw(self, event, first=False):
         if not self.decimate or first: # only add an object at 0
@@ -135,7 +177,8 @@ class Blok:
             current = event.x-self.dotsize, event.y-self.dotsize, event.x+self.dotsize, event.y+self.dotsize
             self.offset = self.offset_total = tuple(new-old for new, old in zip(current, self.canvas.bbox(self.stuff[0][0][0])))
         else:
-            self.offset_total = tuple(sum(pair) for pair in zip(self.offset, self.offset_total))
+            # need the last tuple in the trio to prevent the repeated line from shrinking
+            self.offset_total = tuple(sum(trio) for trio in zip(self.offset, self.offset_total, (0,-1,0,1)))
         self.stuff.append([])
         self.repeat_count = len(self.stuff[0])-1
         self.repeat_cycle()
@@ -148,7 +191,10 @@ class Blok:
         coords[2] = mid+self.dotsize
         if self.repeat_count:
             self.stuff[-1].append((self.canvas.create_rectangle(tuple(coords), fill='black', outline='black'), None))
-        collided = self.collisions(square=self.stuff[-1][-1][0])
+        try:
+            collided = self.collisions(square=self.stuff[-1][-1][0])
+        except IndexError:
+            collided = True
         if collided:
             return
         if self.repeat_count > 0:
@@ -172,7 +218,10 @@ class Blok:
     def rotate(self, shooter, data):
         if data['shot']:
             return
-        x1, y1, x, y = map(int, self.canvas.coords(shooter))
+        try:
+            x1, y1, x, y = map(int, self.canvas.coords(shooter))
+        except ValueError:
+            return
         bx1, by1, bx2, by2 = data['bbox']
         
         if bx1 <= x < bx2 and y==by1:
@@ -305,13 +354,12 @@ class Blok:
             self.all_good_things = self.parent.after(500, self.check_win)
         
     def reset(self, success):
-        print(('lose', 'win')[success])
         self.canvas.unbind("<B1-Motion>")
         self.canvas.unbind("<ButtonRelease-1>")
         self.canvas.unbind("<Button-3>")
         self.parent.after_cancel(self.shooting)
         self.parent.after_cancel(self.all_good_things)
-        self.parent.after(1000, self.draw_board(self.canvas, success))
+        self.parent.after(1000, lambda: self.draw_board(self.canvas, success))
         
         
 root = tk.Tk()
